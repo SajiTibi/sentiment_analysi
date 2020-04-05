@@ -32,17 +32,17 @@ custom:
 
 functions:
   query:
-    handler: handler.query
+    handler: app.handler.query
     timeout: 29 # optional, in seconds, default is 6
     environment:
       BUCKET: deploy-test-dev-serverlessdeploymentbucket-f5ypyezpo71t
     events:
+
       - http:
-          path: /{phrase}
+          path: /{v}/{phrase}
           method: get
           cors: true # @cors_headers() from lambda_decorators package also used on functions
       - http:
-          path: /{phrase}/{pretty}
+          path: /{v}/{phrase}/{pretty}
           method: get
           cors: true
-

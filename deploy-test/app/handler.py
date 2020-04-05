@@ -10,36 +10,55 @@ import boto3
 import matplotlib.pyplot as plt
 import requests
 
+from .v0 import collect as v0_collect
+
+
 
 def contains_phrase(phrase: str, headline: str) -> bool:
     return phrase.lower() in headline.lower()
 
 
-def get_kids(topic_id: str, phrase: str) -> List[str]:
+def get_valid_topics(topic_id: str, phrase: str):
     topic_url = f"https://hacker-news.firebaseio.com/v0/item/{topic_id}.json"
     data = requests.get(topic_url).json()
     if contains_phrase(phrase, data["title"]):
-        return data["kids"] if "kids" in data else []
-    return []
+        return topic_id
+    return None
 
 
-def get_comment(comment_id: str) -> str:
-    topic_url = f"https://hacker-news.firebaseio.com/v0/item/{comment_id}.json"
-    data = requests.get(topic_url).json()
-    return data["text"] if "text" in data else None
+def get_comments(topic_id):
+    # doesnt support nested comments
+    topic_url = f"https://hn.algolia.com/api/v1/search?tags=comment,story_{topic_id}"
+    try:
+        data = requests.get(topic_url).json()
+    except:
+        print(topic_id)
+        return []
+    topic_comments = data["hits"]
+    comments = []
+    for comment in topic_comments:
+        if comment["comment_text"]:
+            comments.append(comment["comment_text"])
+    return comments
 
 
 def collect(phrase: str) -> List[str]:
     top_topics_url = "https://hacker-news.firebaseio.com/v0/topstories.json"
-    data = requests.get(top_topics_url).json()
-    comments_ids = []
+    topic_ids = requests.get(top_topics_url).json()
+    valid_topic_ids = []
+    s = timer()
     with ThreadPoolExecutor()as pool:
-        for topic_kids in (list(pool.map(get_kids, data, repeat(phrase)))):
-            if topic_kids:
-                comments_ids.append(topic_kids)
-    comments_ids = sum(comments_ids, [])
+        for topic_id in (list(pool.map(get_valid_topics, topic_ids, repeat(phrase)))):
+            if topic_id:
+                valid_topic_ids.append(topic_id)
+    e1 = timer() - s
+    print(f'took {e1} and got {len(valid_topic_ids)} valid topics ')
+
     with ThreadPoolExecutor()as pool:
-        comments_txt = [comment for comment in (list(pool.map(get_comment, comments_ids))) if comment]
+        comments_txt = [comment for comment in (list(pool.map(get_comments, valid_topic_ids))) if comment and len(comment) <5000]
+    e2 = timer() - s - e1
+    comments_txt = sum(comments_txt, [])
+    print(f' took {e2} and got {len(comments_txt)} comments_txt')
     return comments_txt
 
 
@@ -55,11 +74,17 @@ def get_comments_analysis(comments: List[str]) -> List[dict]:
     return sum(comments_analysis, [])
 
 
-def run(phrase: str):
+def run(phrase: str,version:str) -> dict:
     start = timer()
-    comments = collect(phrase)
+    if version == "v0":
+        comments = v0_collect(phrase)
+    else:
+        comments = collect(phrase)
+    e1 = timer() - start
+    print(f'collecting comments: {e1}')
     comments_analysis = get_comments_analysis(comments)
-
+    e2 = timer() - start - e1
+    print(f'analysing comments: {e2}')
     counter_d = dict()
     all_count = 0
     for comment in comments_analysis:
@@ -76,15 +101,15 @@ def run(phrase: str):
     return {"results": counter_d, "comments_count": all_count, "response_time": f'{run_time} seconds'}
 
 
-def pretty_query(phrase, query_result):
+def pretty_query(phrase: str, query_result: dict) -> dict:
     labels = list(query_result["results"].keys())
     values = list(query_result["results"].values())
     comments_count = query_result["comments_count"]
     response_time = query_result["response_time"]
     fig1, ax1 = plt.subplots()
-    ax1.pie(values, autopct='%1.1f%%', shadow=True, startangle=90)
+    ax1.pie(values, shadow=True, startangle=90)
     ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-    plt.legend(labels=['%s, %1.1f%%' % (l, s) for l, s in zip(labels, values)])
+    plt.legend(labels=['%s, %s' % (l, s) for l, s in zip(labels, values)])
     plt.title(f'phrase: {phrase} Total comments:{str(comments_count)} response time:{str(response_time)}.')
     bucket_name = os.environ["BUCKET"]
     buffer = BytesIO()
@@ -105,7 +130,9 @@ def query(event, context):
     query_string_parameters = event["pathParameters"]
     phrase = query_string_parameters["phrase"]
     print(query_string_parameters)
-    query_result = run(phrase)
+    v = query_string_parameters["v"]
+
+    query_result = run(phrase,v)
     comments_count = query_result["comments_count"]
     if comments_count == 0:
         return {"statusCode": 416}
@@ -118,4 +145,4 @@ def query(event, context):
 
     return {"statusCode": 200, "body": json.dumps(query_result)}
 
-# hello(0,0)
+

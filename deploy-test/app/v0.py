@@ -45,3 +45,4 @@ def collect(phrase: str) -> List[str]:
     print(f' took {e2} and got {len(comments_txt)} comments_txt')
     return comments_txt
 
+

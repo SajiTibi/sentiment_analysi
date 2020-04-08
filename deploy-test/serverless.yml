@@ -23,7 +23,7 @@ provider:
     - Effect: Allow
       Action:
         - s3:*
-      Resource: 'arn:aws:s3:::deploy-test-dev-serverlessdeploymentbucket-f5ypyezpo71t/*'
+      Resource: 'arn:aws:s3:::deploy-test-dev-serverlessdeploymentbucket-7fklcndyt54i/*'
 plugins:
   - serverless-python-requirements
 custom:
@@ -35,7 +35,7 @@ functions:
     handler: app.handler.query
     timeout: 29 # optional, in seconds, default is 6
     environment:
-      BUCKET: deploy-test-dev-serverlessdeploymentbucket-f5ypyezpo71t
+      BUCKET: deploy-test-dev-serverlessdeploymentbucket-7fklcndyt54i
     events:
 
       - http:
@@ -46,3 +46,19 @@ functions:
           path: /{v}/{phrase}/{pretty}
           method: get
           cors: true
+
+resources: # CloudFormation template syntax from here on.
+    Resources:
+      topicsTable:
+        Type: AWS::DynamoDB::Table
+        Properties:
+          TableName: topicsTable
+          AttributeDefinitions:
+            - AttributeName: topic
+              AttributeType: N
+          KeySchema:
+            - AttributeName: topic
+              KeyType: HASH
+          ProvisionedThroughput:
+            ReadCapacityUnits: 1
+            WriteCapacityUnits: 1

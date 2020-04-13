@@ -37,6 +37,19 @@ def get_comment(comment_id: str) -> str:
     return bs4.BeautifulSoup(data["text"], features="html.parser").get_text()
 
 
+def get_topic_comments(topic_id: int) -> List[str]:
+    #  support nested comments
+    topic_url = f"https://hn.algolia.com/api/v1/search?tags=comment,story_{topic_id}"
+    data = requests.get(topic_url).json()
+    topic_comments = data["hits"]
+    comments_lst = []
+    for comment in topic_comments:
+        if comment["comment_text"]:
+            plain_text = bs4.BeautifulSoup(comment["comment_text"], features="html.parser").get_text()
+            comments_lst.append(plain_text)
+    return comments_lst
+
+
 def get_valid_topic_ids(phrase: str, topics_db: pymongo.collection.Collection) -> List[int]:
     top_topics_url = "https://hacker-news.firebaseio.com/v0/topstories.json"
     topic_ids = requests.get(top_topics_url).json()
@@ -45,23 +58,17 @@ def get_valid_topic_ids(phrase: str, topics_db: pymongo.collection.Collection) -
 
 
 def get_comments_analysis(comments: List[str]) -> List[dict]:
+    # the data is partitioned to chunks of 25 as its the max amount can be processed by batch_detect_sentiment.
     n = 25
     comprehend = boto3.client(service_name='comprehend')
     comments_chunks = [comments[i:i + n] for i in range(0, len(comments), n)]
     comments_analysis = []
+
     for comments_chunk in comments_chunks:
         comments_analysis.append(json.loads(json.dumps(comprehend.batch_detect_sentiment
                                                        (TextList=comments_chunk, LanguageCode='en'), sort_keys=True,
                                                        indent=4))["ResultList"])
     return sum(comments_analysis, [])
-
-
-def get_comments(topic_id: int) -> List[str]:
-    #  support nested comments
-    topic_url = f"https://hn.algolia.com/api/v1/search?tags=comment,story_{topic_id}"
-    data = requests.get(topic_url).json()
-    topic_comments = data["hits"]
-    return [comment["comment_text"] for comment in topic_comments if comment["comment_text"]]
 
 
 def write_topics_to_db(topics_ids: List[int], topics_db: pymongo.collection.Collection) -> dict:
@@ -91,8 +98,10 @@ def get_topics_from_db(topics_ids: List[int], topics_db: pymongo.collection.Coll
 def get_comments_v1(phrase: str, topics_db: pymongo.collection.Collection) -> List[str]:
     valid_topic_ids = get_valid_topic_ids(phrase, topics_db)
     with ThreadPoolExecutor()as pool:
-        comments_txt = [comment for comment in (list(pool.map(get_comments, valid_topic_ids))) if
-                        comment and len(comment) < 5000]
+        comments_txt = []
+        for topic_comments in list(pool.map(get_topic_comments, valid_topic_ids)):
+            topic_comments = [comment for comment in topic_comments if len(comment) < 5000]
+            comments_txt.append(topic_comments)
     comments_txt = sum(comments_txt, [])
     return comments_txt
 

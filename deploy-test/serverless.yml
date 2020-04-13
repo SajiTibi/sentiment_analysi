@@ -16,6 +16,7 @@ service: deploy-test
 package:
   exclude:
     - node_modules/**
+    - venv/**
 provider:
   name: aws
   runtime: python3.6
@@ -33,7 +34,7 @@ custom:
 functions:
   query:
     handler: app.handler.query
-    timeout: 29 # optional, in seconds, default is 6
+    timeout: 15
     environment:
       BUCKET: deploy-test-dev-serverlessdeploymentbucket-7fklcndyt54i
     events:
@@ -41,24 +42,24 @@ functions:
       - http:
           path: /{v}/{phrase}
           method: get
-          cors: true # @cors_headers() from lambda_decorators package also used on functions
+          cors: true
       - http:
           path: /{v}/{phrase}/{pretty}
           method: get
           cors: true
 
-resources: # CloudFormation template syntax from here on.
-    Resources:
-      topicsTable:
-        Type: AWS::DynamoDB::Table
-        Properties:
-          TableName: topicsTable
-          AttributeDefinitions:
-            - AttributeName: topic
-              AttributeType: N
-          KeySchema:
-            - AttributeName: topic
-              KeyType: HASH
-          ProvisionedThroughput:
-            ReadCapacityUnits: 1
-            WriteCapacityUnits: 1
+#resources: # CloudFormation template syntax from here on.
+#    Resources:
+#      topicsTable:
+#        Type: AWS::DynamoDB::Table
+#        Properties:
+#          TableName: topicsTable
+#          AttributeDefinitions:
+#            - AttributeName: topic
+#              AttributeType: N
+#          KeySchema:
+#            - AttributeName: topic
+#              KeyType: HASH
+#          ProvisionedThroughput:
+#            ReadCapacityUnits: 1
+#            WriteCapacityUnits: 1

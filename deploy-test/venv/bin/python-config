@@ -1,4 +1,4 @@
-#!/home/saji/PycharmProjects/deploy-test/venv/bin/python
+#!/home/saji/PycharmProjects/sentiment_analysis/deploy-test/venv/bin/python
 
 import sys
 import getopt

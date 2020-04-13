@@ -1,14 +1,16 @@
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
-from itertools import repeat
-import time
+from io import BytesIO
 from timeit import default_timer as timer
 from typing import List
 
 import boto3
-# import matplotlib.pyplot as plt
+import bs4
+from . import config
+import matplotlib.pyplot as plt
+import pymongo
 import requests
-from v0 import collect as v0_collect
 
 
 def contains_phrase(phrase: str, headline: str) -> bool:
@@ -21,106 +23,99 @@ def get_topic_title(topic_id: int) -> (int, str):
     return topic_id, data["title"]
 
 
-def get_valid_topics(topic_id: str, phrase: str):
+def get_kids(topic_id: str) -> List[str]:
     topic_url = f"https://hacker-news.firebaseio.com/v0/item/{topic_id}.json"
     data = requests.get(topic_url).json()
-    if contains_phrase(phrase, data["title"]):
-        return topic_id
-    return None
+    return data["kids"] if "kids" in data else []
 
 
-def get_comments(topic_id):
-    #  support nested comments
-    topic_url = f"https://hn.algolia.com/api/v1/search?tags=comment,story_{topic_id}"
-    try:
-        data = requests.get(topic_url).json()
-    except:
-        print(f'invalid {topic_id} topic.')
-        return []
-    topic_comments = data["hits"]
-    comments = []
-    for comment in topic_comments:
-        if comment["comment_text"]:
-            comments.append(comment["comment_text"])
-    return comments
+def get_comment(comment_id: str) -> str:
+    topic_url = f"https://hacker-news.firebaseio.com/v0/item/{comment_id}.json"
+    data = requests.get(topic_url).json()
+    if "text" not in data:
+        return ""
+    return bs4.BeautifulSoup(data["text"], features="html.parser").get_text()
 
 
-def write_topics_to_db(topics_ids: List[int]):
-    with ThreadPoolExecutor()as pool:
-        all_topics = [topic_description for topic_description in (list(pool.map(get_topic_title, topics_ids)))]
-    n = 25
-    topics_ids_chunks = [all_topics[i:i + n] for i in range(0, len(all_topics), n)]
-    client = boto3.client(service_name='dynamodb', region_name="us-east-1")
-    for ti_chunk in topics_ids_chunks:
-        request_keys = [{'PutRequest': {"Item": {"topic": {"N": str(topic[0])}, "title": {"S": topic[1]}}}} for topic in
-                        ti_chunk]
-        response = client.batch_write_item(RequestItems={"topicsTable": request_keys})
-        # print(response)
-
-
-def get_topics_from_db(topics_ids: List[int]) -> List[str]:
-    start = timer()
-    n = 50
-    topics_ids_chunks = [topics_ids[i:i + n] for i in range(0, len(topics_ids), n)]
-    client = boto3.client(service_name='dynamodb', region_name="us-east-1")
-    topic_id_titles_map = dict()
-    for ti_chunk in topics_ids_chunks:
-        request_keys = {'Keys': [{"topic": {"N": str(topic_id)}}for topic_id in ti_chunk]}
-        response = client.batch_get_item(RequestItems={"topicsTable": request_keys})
-        found_topics = response["Responses"]["topicsTable"]
-        time.sleep(500)
-        for i in found_topics:
-            topic_id_titles_map[i["topic"]["N"]] = i["title"]["S"]
-    run_time = timer()-start
-    print(len(topic_id_titles_map))
-    print(f'getting topics from DB run_time: {run_time}')
-def collect(phrase: str) -> List[str]:
+def get_valid_topic_ids(phrase: str, topics_db: pymongo.collection.Collection) -> List[int]:
     top_topics_url = "https://hacker-news.firebaseio.com/v0/topstories.json"
     topic_ids = requests.get(top_topics_url).json()
-    x = get_topics_from_db(topic_ids)
-    valid_topic_ids = []
-    s = timer()
-    with ThreadPoolExecutor()as pool:
-        for topic_id in (list(pool.map(get_valid_topics, topic_ids, repeat(phrase)))):
-            if topic_id:
-                valid_topic_ids.append(topic_id)
-    e1 = timer() - s
-    print(f'took {e1} and got {len(valid_topic_ids)} valid topics ')
-
-    with ThreadPoolExecutor()as pool:
-        comments_txt = [comment for comment in (list(pool.map(get_comments, valid_topic_ids))) if
-                        comment and len(comment) < 5000]
-    e2 = timer() - s - e1
-    comments_txt = sum(comments_txt, [])
-    print(f' took {e2} and got {len(comments_txt)} comments_txt')
-    return comments_txt
+    topics_mapping = get_topics_from_db(topic_ids, topics_db)
+    return [topic_id for topic_id in topics_mapping if contains_phrase(phrase, topics_mapping[topic_id])]
 
 
 def get_comments_analysis(comments: List[str]) -> List[dict]:
     n = 25
     comprehend = boto3.client(service_name='comprehend')
-
     comments_chunks = [comments[i:i + n] for i in range(0, len(comments), n)]
     comments_analysis = []
     for comments_chunk in comments_chunks:
-        comments_analysis.append(json.loads(
-            json.dumps(comprehend.batch_detect_sentiment(TextList=comments_chunk,
-                                                         LanguageCode='en'), sort_keys=True, indent=4))["ResultList"])
+        comments_analysis.append(json.loads(json.dumps(comprehend.batch_detect_sentiment
+                                                       (TextList=comments_chunk, LanguageCode='en'), sort_keys=True,
+                                                       indent=4))["ResultList"])
     return sum(comments_analysis, [])
 
 
-def run(phrase: str, version: str) -> dict:
+def get_comments(topic_id: int) -> List[str]:
+    #  support nested comments
+    topic_url = f"https://hn.algolia.com/api/v1/search?tags=comment,story_{topic_id}"
+    data = requests.get(topic_url).json()
+    topic_comments = data["hits"]
+    return [comment["comment_text"] for comment in topic_comments if comment["comment_text"]]
+
+
+def write_topics_to_db(topics_ids: List[int], topics_db: pymongo.collection.Collection) -> dict:
+    if not topics_ids:
+        return {}
+    with ThreadPoolExecutor()as pool:
+        all_topics = [topic_description for topic_description in (list(pool.map(get_topic_title, topics_ids)))]
+    topics_docs = [{"topic_id": topic_description[0], "topic_title": topic_description[1]} for topic_description in
+                   all_topics]
+    topics_db.insert_many(topics_docs)  # todo more fail checks
+    topics_mapping = {topic[0]: topic[1] for topic in all_topics}
+    return topics_mapping
+
+
+def get_topics_from_db(topics_ids: List[int], topics_db: pymongo.collection.Collection) -> dict:
+    topics_ids_mapping = dict()
+    topics_query = {"topic_id": {"$in": topics_ids}}
+    query_result = topics_db.find(topics_query)
+    for topic_item in query_result:
+        topics_ids_mapping[topic_item["topic_id"]] = topic_item["topic_title"]
+    new_topics = [topic_id for topic_id in topics_ids if topic_id not in topics_ids_mapping]
+    new_topics = write_topics_to_db(new_topics, topics_db)
+    topics_ids_mapping.update(new_topics)
+    return topics_ids_mapping
+
+
+def get_comments_v1(phrase: str, topics_db: pymongo.collection.Collection) -> List[str]:
+    valid_topic_ids = get_valid_topic_ids(phrase, topics_db)
+    with ThreadPoolExecutor()as pool:
+        comments_txt = [comment for comment in (list(pool.map(get_comments, valid_topic_ids))) if
+                        comment and len(comment) < 5000]
+    comments_txt = sum(comments_txt, [])
+    return comments_txt
+
+
+def get_comments_v0(phrase: str, topics_db: pymongo.collection.Collection) -> List[str]:
+    valid_topic_ids = get_valid_topic_ids(phrase, topics_db)
+    with ThreadPoolExecutor()as pool:
+        comments_ids = [comment_ids for comment_ids in (list(pool.map(get_kids, valid_topic_ids)))]
+    comments_ids = sum(comments_ids, [])
+    with ThreadPoolExecutor()as pool:
+        comments_txt = [comment for comment in (list(pool.map(get_comment, comments_ids))) if
+                        comment and len(comment) < 5000]
+    return comments_txt
+
+
+def run(phrase: str, version: str, topics_db: pymongo.collection.Collection) -> dict:
     start = timer()
     if version == "v0":
-        comments = v0_collect(phrase)
+        comments = get_comments_v0(phrase, topics_db)
     else:
-        comments = collect(phrase)
-    e1 = timer() - start
-    print(f'collecting comments: {e1}')
+        comments = get_comments_v1(phrase, topics_db)
     comments_analysis = get_comments_analysis(comments)
-    e2 = timer() - start - e1
-    print(f'analysing comments: {e2}')
-    counter_d = dict()
+    counter_d = {}
     all_count = 0
     for comment in comments_analysis:
         comment_sentiment = comment["Sentiment"]
@@ -129,36 +124,33 @@ def run(phrase: str, version: str) -> dict:
         else:
             counter_d[comment_sentiment] = 1
         all_count += 1
-    for k in counter_d.keys():
+    for k in counter_d:
         counter_d[k] = "%.2f" % ((counter_d[k] / all_count) * 100)
     end = timer()
     run_time = "%.2f" % (end - start)
     return {"results": counter_d, "comments_count": all_count, "response_time": f'{run_time} seconds'}
 
 
-# def pretty_query(phrase: str, query_result: dict) -> dict:
-#     labels = list(query_result["results"].keys())
-#     values = list(query_result["results"].values())
-#     comments_count = query_result["comments_count"]
-#     response_time = query_result["response_time"]
-#     fig1, ax1 = plt.subplots()
-#     ax1.pie(values, shadow=True, startangle=90)
-#     ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
-#     plt.legend(labels=['%s, %s' % (l, s) for l, s in zip(labels, values)])
-#     plt.title(f'phrase: {phrase} Total comments:{str(comments_count)} response time:{str(response_time)}.')
-#     bucket_name = os.environ["BUCKET"]
-#     buffer = BytesIO()
-#     s3 = boto3.resource('s3')
-#     plt.savefig(buffer, format='png')
-#     buffer.seek(0)
-#     obj = s3.Object(
-#         bucket_name=bucket_name,
-#         key=f'{phrase}.png'
-#     )
-#     obj.put(Body=buffer, ACL='public-read', ContentType='image/png')
-#     object_url = "https://%s.s3.amazonaws.com/%s" % (bucket_name, f'{phrase}.png')
-#     print(f'objecutrl: {object_url}')
-#     return {"statusCode": 302, "headers": {"location": object_url}}
+def pretty_query(phrase: str, query_result: dict) -> dict:
+    labels = list(query_result["results"].keys())
+    values = list(query_result["results"].values())
+    comments_count = query_result["comments_count"]
+    response_time = query_result["response_time"]
+    fig1, ax1 = plt.subplots()
+    ax1.pie(values, shadow=True, startangle=90)
+    ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
+    plt.legend(labels=['%s, %s %%' % (l, s) for l, s in zip(labels, values)])
+    plt.title(f'phrase: {phrase} Total comments:{str(comments_count)} response time:{str(response_time)}.')
+    bucket_name = os.environ["BUCKET"]
+    buffer = BytesIO()
+    s3 = boto3.resource('s3')
+    plt.savefig(buffer, format='png')
+    buffer.seek(0)
+    # todo: add to the filename a timestamp or other flag to avoid collisions
+    obj = s3.Object(bucket_name=bucket_name, key=f'{phrase}.png')
+    obj.put(Body=buffer, ACL='public-read', ContentType='image/png')
+    object_url = "https://%s.s3.amazonaws.com/%s" % (bucket_name, f'{phrase}.png')
+    return {"statusCode": 302, "headers": {"location": object_url}}
 
 
 def query(event, context):
@@ -166,21 +158,19 @@ def query(event, context):
     phrase = query_string_parameters["phrase"]
     print(query_string_parameters)
     v = query_string_parameters["v"]
-
-    query_result = run(phrase, v)
+    client = pymongo.MongoClient(
+        f"mongodb+srv://{config.username}:{config.password}@cluster0-lftvo.mongodb.net/test?retryWrites=true&w=majority")
+    db = client["topics"]
+    db_collection = db["topics_mapping"]
+    query_result = run(phrase, v, db_collection)
     comments_count = query_result["comments_count"]
     if comments_count == 0:
         return {"statusCode": 416}
 
     if "pretty" in query_string_parameters:
         if query_string_parameters["pretty"] == "pretty":
-            pass
-            # return pretty_query(phrase, query_result)
+            return pretty_query(phrase, query_result)
         else:
             return {"statusCode": 416}
-
     return {"statusCode": 200, "body": json.dumps(query_result)}
 
-
-if __name__ == '__main__':
-    run("corona", "v1")

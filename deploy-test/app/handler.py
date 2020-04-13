@@ -8,12 +8,14 @@ from typing import List
 import boto3
 import bs4
 from . import config
+# import config
 import matplotlib.pyplot as plt
 import pymongo
 import requests
 
 
 def contains_phrase(phrase: str, headline: str) -> bool:
+    phrase = phrase.replace('_', ' ')
     return phrase.lower() in headline.lower()
 
 

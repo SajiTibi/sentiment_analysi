@@ -7,16 +7,20 @@ This service allows the users to analyse the comments of the topstories with giv
 - {v} 
 v0: doesnt support nested comments can be slower for topics with high amount of  replies.
 v1: supports nested comments.
-- {phrase}: search phrase
+- {phrase}: search phrase, use _ as whitespace to seperate words
 - {pretty}: optional, adding pretty will display the data as graph.
 
 **Examples:**
 
 - https://vhkgzpk2d7.execute-api.us-east-1.amazonaws.com/dev/v1/corona
-> {"results": {"NEUTRAL": "51.27", "NEGATIVE": "35.03", "MIXED": "3.55", "POSITIVE": "10.15"}, "comments_count": 197, "response_time": "4.21 seconds"}
+>{"results": {"NEUTRAL": "38.35", "NEGATIVE": "42.11", "MIXED": "3.01", "POSITIVE": "16.54"}, "comments_count": 133, "processing_time": "4.99 seconds"}
 
-- https://vhkgzpk2d7.execute-api.us-east-1.amazonaws.com/dev/v1/corona/pretty
- ![corona](https://user-images.githubusercontent.com/34559152/79121442-ff03d480-7d9d-11ea-8ec7-87e1333128ff.png)
+- https://vhkgzpk2d7.execute-api.us-east-1.amazonaws.com/dev/v1/how_to
+
+> {"results": {"NEUTRAL": "42.86", "NEGATIVE": "38.10", "MIXED": "2.38", "POSITIVE": "16.67"}, "comments_count": 42, "processing_time": "1.34 seconds"}
+
+- https://vhkgzpk2d7.execute-api.us-east-1.amazonaws.com/dev/v1/trump/pretty
+![trump](https://user-images.githubusercontent.com/34559152/79369189-3a96ce00-7f59-11ea-98a0-f2c2e0704ea7.png)
 
 - https://vhkgzpk2d7.execute-api.us-east-1.amazonaws.com/dev/v1/corona/anyotherkeyword
    will cause an `HTTP ERROR 416

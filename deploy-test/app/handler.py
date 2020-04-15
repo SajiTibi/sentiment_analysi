@@ -139,19 +139,19 @@ def run(phrase: str, version: str, topics_db: pymongo.collection.Collection) -> 
         counter_d[k] = "%.2f" % ((counter_d[k] / all_count) * 100)
     end = timer()
     run_time = "%.2f" % (end - start)
-    return {"results": counter_d, "comments_count": all_count, "response_time": f'{run_time} seconds'}
+    return {"results": counter_d, "comments_count": all_count, "processing_time": f'{run_time} seconds'}
 
 
 def pretty_query(phrase: str, query_result: dict) -> dict:
     labels = list(query_result["results"].keys())
     values = list(query_result["results"].values())
     comments_count = query_result["comments_count"]
-    response_time = query_result["response_time"]
+    processing_time = query_result["processing_time"]
     fig1, ax1 = plt.subplots()
     ax1.pie(values, shadow=True, startangle=90)
     ax1.axis('equal')  # Equal aspect ratio ensures that pie is drawn as a circle.
     plt.legend(labels=['%s, %s %%' % (l, s) for l, s in zip(labels, values)])
-    plt.title(f'phrase: {phrase} Total comments:{str(comments_count)} response time:{str(response_time)}.')
+    plt.title(f'phrase: {phrase} Total comments:{str(comments_count)} processing time:{str(processing_time)}.')
     bucket_name = os.environ["BUCKET"]
     buffer = BytesIO()
     s3 = boto3.resource('s3')

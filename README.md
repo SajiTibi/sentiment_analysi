@@ -1,6 +1,6 @@
 # sentiment_analysis
 **Brief**
-This service allows the users to analyse the comments of the topstories with given phrase, there is an option for analyzing nested comments(comment on a comment) as well, the analyses done using AWS comprehend services, the results can be retrieved as json or graph . 
+This service allows the users to analyse the comments of the topstories in hacker-news website with given phrase, there is an option for analyzing nested comments(comment on a comment) as well, the analyses done using AWS comprehend services, the results can be retrieved as json or graph . 
 
 **Usage**
 `https://vhkgzpk2d7.execute-api.us-east-1.amazonaws.com/dev/{v}/{phrase}/{pretty}`
